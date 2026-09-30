@@ -114,6 +114,53 @@ def test_update_uses_canonical_names_and_preserves_partial_values(
         assert len(session.scalars(select(DatasetMetadataBinding)).all()) == 1
 
 
+def test_partial_update_removes_requested_metadata_and_preserves_unrelated_values(
+    metadata_service: MetadataService, sqlite_session_factory: sessionmaker[Session]
+) -> None:
+    category = metadata_service.create_metadata(REF, MetadataArgs(type="string", name="category"), actor_id="actor")
+    keep = metadata_service.create_metadata(REF, MetadataArgs(type="string", name="keep"), actor_id="actor")
+    with sqlite_session_factory.begin() as session:
+        document = session.get(Document, DOCUMENT_ID)
+        assert document is not None
+        document.doc_metadata = {"category": "old", "keep": "preserve", "unrelated": "untouched"}
+        session.add_all(
+            [
+                DatasetMetadataBinding(
+                    tenant_id=REF.tenant_id,
+                    dataset_id=REF.dataset_id,
+                    document_id=DOCUMENT_ID,
+                    metadata_id=field.id,
+                    created_by="actor",
+                )
+                for field in (category, keep)
+            ]
+        )
+
+    metadata_service.update_documents_metadata(
+        REF,
+        MetadataOperationData(
+            operation_data=[
+                DocumentMetadataOperation(
+                    document_id=DOCUMENT_ID,
+                    metadata_list=[MetadataDetail(id=keep.id, name="keep", value="preserve")],
+                    metadata_ids_to_remove=[category.id],
+                    partial_update=True,
+                )
+            ]
+        ),
+        actor_id="actor",
+    )
+
+    with sqlite_session_factory() as session:
+        document = session.get(Document, DOCUMENT_ID)
+        assert document is not None
+        assert document.doc_metadata == {"keep": "preserve", "unrelated": "untouched"}
+        bindings = session.scalars(
+            select(DatasetMetadataBinding).where(DatasetMetadataBinding.document_id == DOCUMENT_ID)
+        ).all()
+        assert {binding.metadata_id for binding in bindings} == {keep.id}
+
+
 @pytest.mark.parametrize("foreign", ["dataset", "document", "metadata"])
 def test_owner_chain_is_validated_before_any_batch_write(
     metadata_service: MetadataService, sqlite_session_factory: sessionmaker[Session], foreign: str

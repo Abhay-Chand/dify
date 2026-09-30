@@ -1,3 +1,4 @@
+import type { MetadataBatchEditToServer } from '../../types'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vite-plus/test'
 import { DataType, UpdateType } from '../../types'
@@ -28,10 +29,12 @@ type MetadataItemWithEdit = {
 
 // Mock useBatchUpdateDocMetadata
 const mockMutateAsync = vi.fn().mockResolvedValue({})
+const mockUseDocumentMetaDataList = vi.fn()
 vi.mock('@/service/knowledge/use-metadata', () => ({
   useBatchUpdateDocMetadata: () => ({
     mutateAsync: mockMutateAsync,
   }),
+  useDocumentMetaDataList: (...args: unknown[]) => mockUseDocumentMetaDataList(...args),
 }))
 
 vi.mock('@/app/notifications', () => ({
@@ -66,6 +69,7 @@ describe('useBatchEditDocumentMetadata', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseDocumentMetaDataList.mockReturnValue([])
   })
 
   describe('Hook Initialization', () => {
@@ -96,21 +100,21 @@ describe('useBatchEditDocumentMetadata', () => {
   })
 
   describe('Modal Control', () => {
-    it('should show modal when showEditModal is called', () => {
+    it('should show modal when showEditModal is called', async () => {
       const { result } = renderHook(() => useBatchEditDocumentMetadata(defaultProps))
 
-      act(() => {
-        result.current.showEditModal()
+      await act(async () => {
+        await result.current.showEditModal()
       })
 
       expect(result.current.isShowEditModal).toBe(true)
     })
 
-    it('should hide modal when hideEditModal is called', () => {
+    it('should hide modal when hideEditModal is called', async () => {
       const { result } = renderHook(() => useBatchEditDocumentMetadata(defaultProps))
 
-      act(() => {
-        result.current.showEditModal()
+      await act(async () => {
+        await result.current.showEditModal()
       })
 
       act(() => {
@@ -243,7 +247,7 @@ describe('useBatchEditDocumentMetadata', () => {
       )
 
       await act(async () => {
-        await result.current.handleSave([], [], false)
+        await result.current.handleSave(result.current.originalList, [], false)
       })
 
       expect(mockMutateAsync).toHaveBeenCalled()
@@ -267,14 +271,14 @@ describe('useBatchEditDocumentMetadata', () => {
     it('should hide modal after successful save', async () => {
       const { result } = renderHook(() => useBatchEditDocumentMetadata(defaultProps))
 
-      act(() => {
-        result.current.showEditModal()
+      await act(async () => {
+        await result.current.showEditModal()
       })
 
       expect(result.current.isShowEditModal).toBe(true)
 
       await act(async () => {
-        await result.current.handleSave([], [], false)
+        await result.current.handleSave(result.current.originalList, [], false)
       })
 
       await waitFor(() => {
@@ -569,7 +573,7 @@ describe('useBatchEditDocumentMetadata', () => {
       )
 
       await act(async () => {
-        await result.current.handleSave([], [], false)
+        await result.current.handleSave(result.current.originalList, [], false)
       })
 
       expect(mockMutateAsync).toHaveBeenCalledWith(
@@ -585,8 +589,18 @@ describe('useBatchEditDocumentMetadata', () => {
     })
 
     it('should handle selectedDocumentIds not in docList', async () => {
-      // Select a document that's not in docList
       const selectedIds = ['doc-1', 'doc-not-in-list']
+      mockUseDocumentMetaDataList.mockReturnValueOnce([
+        {
+          data: {
+            doc_metadata: [
+              { id: '3', name: 'field_three', type: DataType.string, value: 'Value 3' },
+            ],
+          },
+          isSuccess: true,
+          refetch: vi.fn(),
+        },
+      ])
       const { result } = renderHook(() =>
         useBatchEditDocumentMetadata({
           ...defaultProps,
@@ -595,7 +609,7 @@ describe('useBatchEditDocumentMetadata', () => {
       )
 
       await act(async () => {
-        await result.current.handleSave([], [], false)
+        await result.current.handleSave(result.current.originalList, [], false)
       })
 
       expect(mockMutateAsync).toHaveBeenCalledWith(
@@ -603,11 +617,122 @@ describe('useBatchEditDocumentMetadata', () => {
           metadata_list: expect.arrayContaining([
             expect.objectContaining({
               document_id: 'doc-not-in-list',
+              metadata_list: expect.arrayContaining([expect.objectContaining({ id: '3' })]),
+              metadata_ids_to_remove: [],
               partial_update: true,
             }),
           ]),
         }),
       )
+    })
+
+    it('edits mixed metadata across pages and preserves unrelated metadata', async () => {
+      const selectedIds = ['doc-page-1', 'doc-page-2']
+      const currentPageMetadata = [
+        { id: 'category', name: 'category', type: DataType.string, value: 'new' },
+        { id: 'keep', name: 'keep', type: DataType.string, value: 'preserve' },
+      ]
+      mockUseDocumentMetaDataList.mockReturnValueOnce([
+        {
+          data: {
+            doc_metadata: [
+              { id: 'category', name: 'category', type: DataType.string, value: 'old' },
+              { id: 'keep', name: 'keep', type: DataType.string, value: 'preserve' },
+            ],
+          },
+          isSuccess: true,
+          refetch: vi.fn(),
+        },
+      ])
+      const { result } = renderHook(() =>
+        useBatchEditDocumentMetadata({
+          ...defaultProps,
+          docList: [{ id: 'doc-page-2', doc_metadata: currentPageMetadata }] as Parameters<
+            typeof useBatchEditDocumentMetadata
+          >[0]['docList'],
+          selectedDocumentIds: selectedIds,
+        }),
+      )
+
+      const category = result.current.originalList.find((item) => item.id === 'category')
+      expect(category).toMatchObject({ value: null, isMultipleValue: true })
+
+      await act(async () => {
+        await result.current.handleSave(
+          [
+            {
+              ...category!,
+              value: 'updated',
+              isMultipleValue: false,
+              updateType: UpdateType.changeValue,
+            },
+            ...result.current.originalList.filter((item) => item.id === 'keep'),
+          ],
+          [],
+          false,
+        )
+      })
+
+      const operations: MetadataBatchEditToServer = mockMutateAsync.mock.calls[0]![0].metadata_list
+      expect(operations).toHaveLength(2)
+      for (const operation of operations) {
+        expect(operation.metadata_list).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'category', value: 'updated' }),
+            expect.objectContaining({ id: 'keep', value: 'preserve' }),
+          ]),
+        )
+      }
+      expect(operations.find((operation) => operation.document_id === 'doc-page-1')).toMatchObject({
+        partial_update: true,
+        metadata_ids_to_remove: [],
+      })
+    })
+
+    it('removes metadata across pages while preserving unrelated metadata', async () => {
+      const selectedIds = ['doc-page-1', 'doc-page-2']
+      const keep = { id: 'keep', name: 'keep', type: DataType.string, value: 'preserve' }
+      mockUseDocumentMetaDataList.mockReturnValueOnce([
+        {
+          data: {
+            doc_metadata: [
+              { id: 'category', name: 'category', type: DataType.string, value: 'old' },
+              keep,
+            ],
+          },
+          isSuccess: true,
+          refetch: vi.fn(),
+        },
+      ])
+      const { result } = renderHook(() =>
+        useBatchEditDocumentMetadata({
+          ...defaultProps,
+          docList: [
+            {
+              id: 'doc-page-2',
+              doc_metadata: [
+                { id: 'category', name: 'category', type: DataType.string, value: 'new' },
+                keep,
+              ],
+            },
+          ] as Parameters<typeof useBatchEditDocumentMetadata>[0]['docList'],
+          selectedDocumentIds: selectedIds,
+        }),
+      )
+
+      await act(async () => {
+        await result.current.handleSave([keep], [], false)
+      })
+
+      const operations: MetadataBatchEditToServer = mockMutateAsync.mock.calls[0]![0].metadata_list
+      expect(operations).toHaveLength(2)
+      for (const operation of operations) {
+        expect(operation.metadata_list).toEqual([keep])
+        expect(operation.metadata_ids_to_remove).toEqual(['category'])
+      }
+      expect(operations.find((operation) => operation.document_id === 'doc-page-1')).toMatchObject({
+        partial_update: true,
+      })
     })
   })
 

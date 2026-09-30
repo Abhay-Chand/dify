@@ -841,6 +841,7 @@ export const zMetadataDetail = z.object({
  */
 export const zDocumentMetadataOperation = z.object({
   document_id: z.uuid(),
+  metadata_ids_to_remove: z.array(z.uuid()).optional(),
   metadata_list: z.array(zMetadataDetail),
   partial_update: z.boolean().optional().default(false),
 })

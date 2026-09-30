@@ -30,6 +30,7 @@ export type MetadataItemInBatchEdit = MetadataItemWithValue & {
 export type MetadataBatchEditToServer = {
   document_id: string
   metadata_list: MetadataItemWithValue[]
+  metadata_ids_to_remove?: string[]
   partial_update?: boolean
 }[]
 

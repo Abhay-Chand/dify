@@ -9,7 +9,10 @@ import { useBoolean } from 'ahooks'
 import { t } from 'i18next'
 import { useMemo } from 'react'
 import { toast } from '@/app/notifications'
-import { useBatchUpdateDocMetadata } from '@/service/knowledge/use-metadata'
+import {
+  useBatchUpdateDocMetadata,
+  useDocumentMetaDataList,
+} from '@/service/knowledge/use-metadata'
 import { UpdateType } from '../types'
 
 type Props = Readonly<{
@@ -24,18 +27,33 @@ const useBatchEditDocumentMetadata = ({
   selectedDocumentIds,
   onUpdate,
 }: Props) => {
-  const [isShowEditModal, { setTrue: showEditModal, setFalse: hideEditModal }] = useBoolean(false)
-  const metaDataList: MetadataItemWithValue[][] = (() => {
-    const res: MetadataItemWithValue[][] = []
-    docList.forEach((item) => {
-      if (item.doc_metadata) {
-        res.push(item.doc_metadata.filter((item) => item.id !== 'built-in'))
-        return
-      }
-      res.push([])
+  const [isShowEditModal, { setTrue: setShowEditModal, setFalse: hideEditModal }] =
+    useBoolean(false)
+  const documentIds = selectedDocumentIds || docList.map((doc) => doc.id)
+  const offPageDocumentIds = useMemo(
+    () => documentIds.filter((documentId) => !docList.some((doc) => doc.id === documentId)),
+    [docList, documentIds],
+  )
+  const offPageDocumentQueries = useDocumentMetaDataList({
+    datasetId,
+    documentIds: offPageDocumentIds,
+  })
+  const metaDataList: MetadataItemWithValue[][] = useMemo(() => {
+    const metadataByDocumentId = new Map(
+      docList.map((doc) => [doc.id, doc.doc_metadata ?? []] as const),
+    )
+    offPageDocumentQueries.forEach((query, index) => {
+      if (query.data)
+        metadataByDocumentId.set(offPageDocumentIds[index]!, query.data.doc_metadata ?? [])
     })
-    return res
-  })()
+    return documentIds.map((documentId) =>
+      (metadataByDocumentId.get(documentId) ?? []).filter((item) => item.id !== 'built-in'),
+    )
+  }, [docList, documentIds, offPageDocumentIds, offPageDocumentQueries])
+  const metadataByDocumentId = useMemo(
+    () => new Map(documentIds.map((documentId, index) => [documentId, metaDataList[index] ?? []])),
+    [documentIds, metaDataList],
+  )
   // To check is key has multiple value
   const originalList: MetadataItemInBatchEdit[] = useMemo(() => {
     const idNameValue: Record<
@@ -45,6 +63,7 @@ const useBatchEditDocumentMetadata = ({
         isMultipleValue: boolean
       }
     > = {}
+    const documentCountById: Record<string, number> = {}
     const res: MetadataItemInBatchEdit[] = []
     metaDataList.forEach((metaData) => {
       metaData.forEach((item) => {
@@ -67,8 +86,17 @@ const useBatchEditDocumentMetadata = ({
             ...item,
             isMultipleValue: false,
           })
+          documentCountById[item.id] = 1
+          return
         }
+        documentCountById[item.id] = (documentCountById[item.id] ?? 0) + 1
       })
+    })
+    res.forEach((item) => {
+      if ((documentCountById[item.id] ?? 0) < metaDataList.length) {
+        item.isMultipleValue = true
+        item.value = null
+      }
     })
     return res
   }, [metaDataList])
@@ -95,12 +123,9 @@ const useBatchEditDocumentMetadata = ({
         return true
       return false
     })
-    // Use selectedDocumentIds if available, otherwise fall back to docList
-    const documentIds = selectedDocumentIds || docList.map((doc) => doc.id)
     const res: MetadataBatchEditToServer = documentIds.map((documentId) => {
-      // Find the document in docList to get its metadata
       const docIndex = docList.findIndex((doc) => doc.id === documentId)
-      const oldMetadataList = docIndex >= 0 ? metaDataList[docIndex] : []
+      const oldMetadataList = metadataByDocumentId.get(documentId) ?? []
       let newMetadataList: MetadataItemWithValue[] = [...(oldMetadataList ?? []), ...addedList]
         .filter((item) => {
           return !removedList.find((removedItem) => removedItem.id === item.id)
@@ -121,14 +146,23 @@ const useBatchEditDocumentMetadata = ({
       return {
         document_id: documentId,
         metadata_list: newMetadataList,
+        metadata_ids_to_remove: removedList.map((item) => item.id),
         partial_update: docIndex < 0,
       }
     })
     return res
   }
   const { mutateAsync } = useBatchUpdateDocMetadata()
+  const showEditModal = async () => {
+    const queryResults = await Promise.all(
+      offPageDocumentQueries.map((query) =>
+        query.isSuccess ? Promise.resolve(query) : query.refetch(),
+      ),
+    )
+    if (queryResults.every((query) => query.isSuccess)) setShowEditModal()
+  }
   const handleSave = async (
-    editedList: MetadataItemInBatchEdit[],
+    editedList: MetadataItemWithEdit[],
     addedList: MetadataItemInBatchEdit[],
     isApplyToAllSelectDocument: boolean,
   ) => {

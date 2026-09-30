@@ -893,6 +893,7 @@ export type DocumentListResponse = {
 
 export type DocumentMetadataOperation = {
   document_id: string
+  metadata_ids_to_remove?: Array<string>
   metadata_list: Array<MetadataDetail>
   partial_update?: boolean
 }

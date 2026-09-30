@@ -146,7 +146,14 @@ class SQLAlchemyMetadataRepository:
     def update_documents(self, ref: DatasetRef, operations: Sequence[MetadataOperation], *, actor_id: str) -> None:
         with self._sessions.begin() as session:
             dataset = self._dataset(session, ref, write=True)
-            metadata_ids = {value.id for operation in operations for value in operation.metadata_list}
+            metadata_ids = {
+                metadata_id
+                for operation in operations
+                for metadata_id in (
+                    *(value.id for value in operation.metadata_list),
+                    *operation.metadata_ids_to_remove,
+                )
+            }
             fields = {
                 row.id: row for row in session.scalars(self._fields(ref).where(DatasetMetadata.id.in_(metadata_ids)))
             }
@@ -162,6 +169,8 @@ class SQLAlchemyMetadataRepository:
             for operation in operations:
                 document = documents[operation.document_id]
                 values = dict(document.doc_metadata or {}) if operation.partial_update else {}
+                for metadata_id in operation.metadata_ids_to_remove:
+                    values.pop(fields[metadata_id].name, None)
                 values.update({fields[value.id].name: value.value for value in operation.metadata_list})
                 if dataset.built_in_field_enabled:
                     values.update(self._built_in(session, document))
@@ -174,6 +183,12 @@ class SQLAlchemyMetadataRepository:
                     for binding in bindings:
                         session.delete(binding)
                     previous.clear()
+                else:
+                    removed_ids = set(operation.metadata_ids_to_remove)
+                    for binding in bindings:
+                        if binding.metadata_id in removed_ids:
+                            session.delete(binding)
+                            previous.discard(binding.metadata_id)
                 for value in operation.metadata_list:
                     if value.id in previous:
                         continue

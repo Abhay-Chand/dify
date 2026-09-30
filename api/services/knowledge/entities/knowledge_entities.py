@@ -276,6 +276,10 @@ class MetadataDetail(BaseModel):
 class DocumentMetadataOperation(BaseModel):
     document_id: UUIDStr = Field(description="Document ID whose metadata should be updated.")
     metadata_list: list[MetadataDetail] = Field(description="Metadata fields to update.")
+    metadata_ids_to_remove: list[UUIDStr] = Field(
+        default_factory=list,
+        description="Metadata field IDs to remove while applying this operation.",
+    )
     partial_update: bool = Field(
         default=False,
         description="Whether to partially update metadata, keeping existing values for unspecified fields.",

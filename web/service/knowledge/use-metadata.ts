@@ -4,7 +4,7 @@ import type {
   MetadataItemWithValueLength,
 } from '@/app/components/datasets/metadata/types'
 import type { DocumentDetailResponse } from '@/models/datasets'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { del, get, patch, post } from '../base'
 import { useInvalid } from '../use-base'
 import { useDocumentListKey, useInvalidDocumentList } from './use-document'
@@ -100,6 +100,14 @@ export const useBuiltInMetaDataFields = () => {
   })
 }
 
+const documentMetaDataQuery = (datasetId: string, documentId: string) => ({
+  queryKey: [NAME_SPACE, 'document', datasetId, documentId],
+  queryFn: () =>
+    get<DocumentDetailResponse>(`/datasets/${datasetId}/documents/${documentId}`, {
+      params: { metadata: 'only' },
+    }),
+})
+
 export const useDocumentMetaData = ({
   datasetId,
   documentId,
@@ -114,6 +122,21 @@ export const useDocumentMetaData = ({
         params: { metadata: 'only' },
       })
     },
+  })
+}
+
+export const useDocumentMetaDataList = ({
+  datasetId,
+  documentIds,
+}: {
+  datasetId: string
+  documentIds: string[]
+}) => {
+  return useQueries({
+    queries: documentIds.map((documentId) => ({
+      ...documentMetaDataQuery(datasetId, documentId),
+      enabled: false,
+    })),
   })
 }
 

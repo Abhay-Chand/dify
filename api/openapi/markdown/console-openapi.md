@@ -18849,6 +18849,7 @@ Request payload for bulk downloading documents as a zip archive.
 | Name | Type | Description | Required |
 | ---- | ---- | ----------- | -------- |
 | document_id | string (uuid) | Document ID whose metadata should be updated. | Yes |
+| metadata_ids_to_remove | [ string (uuid) ] | Metadata field IDs to remove while applying this operation. | No |
 | metadata_list | [ [MetadataDetail](#metadatadetail) ] | Metadata fields to update. | Yes |
 | partial_update | boolean | Whether to partially update metadata, keeping existing values for unspecified fields. | No |
 
